@@ -28,9 +28,10 @@ EMAIL_PATTERN = re.compile(r"""
 """, re.VERBOSE | re.IGNORECASE)
 
 def normalize_obfuscated(text: str) -> str:
-    if not text: return ""
+    if not text:
+        return ""
     replacements = [
-        (r'\s*\[at\]\s*|\s*\(at\)\s*|\s+at\s+|\s*#\s*', '@'),
+        (r'\s*\[at\]\s*|\s*\(at\]\s*|\s+at\s+|\s*#\s*', '@'),
         (r'\s*\[dot\]\s*|\s*\(dot\)\s*|\s+dot\s+|\s*\[\.\]\s*', '.'),
         (r'\s+\.+\s+', '.'),
         (r'(?<!\w)\s*@\s*(?!\w)', '@'),
@@ -64,10 +65,10 @@ STEALTH_INIT_SCRIPT = """
 """
 
 async def extract_emails(page: Page, current_url: str):
-    # (Same extraction logic as before - kept short for clarity)
     emails = {}
     domain = urlparse(current_url).netloc
 
+    # Block unnecessary resources to speed up and reduce detection
     async def block_route(route: Route):
         if route.request.resource_type in {"image", "stylesheet", "font", "media"}:
             await route.abort()
@@ -85,21 +86,37 @@ async def extract_emails(page: Page, current_url: str):
     except:
         full = ""
 
+    # Normalize obfuscated emails
     norm = normalize_obfuscated(full)
+
+    # Extract emails using regex
     for m in EMAIL_PATTERN.findall(norm):
         clean = m.lower().strip()
-        if "@" in clean:
+        if "@" in clean and len(clean) > 7:
             emails[clean] = "ultra-regex"
 
-    # ... (keep mailto, footer, JSON-LD parts from previous version)
+    # Additional simple extraction for mailto: links (basic version)
+    try:
+        mailtos = await page.evaluate("""
+            () => {
+                const links = Array.from(document.querySelectorAll('a[href^="mailto:"]'));
+                return links.map(a => a.href.replace('mailto:', '').trim());
+            }
+        """)
+        for mail in mailtos:
+            if "@" in mail:
+                emails[mail.lower()] = "mailto-link"
+    except:
+        pass
 
+    # Final filtering and context
     final = {}
     for email, src in emails.items():
-        if len(email) > 7 and "@" in email:
-            dom = email.split("@")[1]
-            if not any(bad in dom for bad in ["example.com", "test.com"]):
-                ctx = "donation-ready" if any(k in full.lower() for k in DONATION_KEYWORDS) else src
-                final[email] = f"{ctx} @ {dom}"
+        dom = email.split("@")[1] if "@" in email else ""
+        if not any(bad in dom for bad in ["example.com", "test.com", "localhost"]):
+            ctx = "donation-ready" if any(k in full.lower() for k in DONATION_KEYWORDS) else src
+            final[email] = f"{ctx} @ {dom}"
+
     return final
 
 async def main():
@@ -107,7 +124,7 @@ async def main():
     start_time = time.time()
     end_time = start_time + (RUN_DURATION_MINUTES * 60)
 
-    print(f"🚀 Starting Automatic Reader-Focused Email Extractor v6.3.1")
+    print(f"🚀 Starting Automatic Reader-Focused Email Extractor v6.3.2")
     print(f"   Duration: {RUN_DURATION_MINUTES} minutes\n")
 
     async with async_playwright() as p:
@@ -117,8 +134,14 @@ async def main():
             browser = None
             try:
                 browser = await p.chromium.launch(
-                    headless=False,
-                    args=["--disable-blink-features=AutomationControlled", "--disable-images", "--no-sandbox", "--disable-gpu"]
+                    headless=True,                    # IMPORTANT: Changed to True for GitHub Actions
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                        "--disable-images",
+                        "--no-sandbox",
+                        "--disable-gpu",
+                        "--disable-dev-shm-usage"
+                    ]
                 )
                 context = await browser.new_context(
                     viewport={"width": 1280, "height": 820},
@@ -130,30 +153,29 @@ async def main():
 
                 print(f"Session {session_count}: Visiting reader sites...")
 
-                for url in READER_HUBS:   # Make sure READER_HUBS is defined (from previous code)
+                for url in READER_HUBS:
                     if time.time() > end_time:
                         break
                     try:
-                        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                        await asyncio.sleep(1.5)
+                        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                        await asyncio.sleep(2)
                         page_emails = await extract_emails(page, url)
                         if page_emails:
                             all_emails.update(page_emails)
                             print(f"   ✅ Found {len(page_emails)} emails from {url}")
                     except Exception as e:
-                        print(f"   ⚠️ Skipped {url}: {str(e)[:80]}")
+                        print(f"   ⚠️ Skipped {url}: {str(e)[:100]}")
 
             except Exception as e:
                 print(f"Session {session_count} error: {e}")
                 traceback.print_exc()
             finally:
-                # Robust cleanup to prevent "will force kill"
                 if browser:
                     try:
-                        await asyncio.wait_for(browser.close(), timeout=10)
+                        await asyncio.wait_for(browser.close(), timeout=15)
                         print(f"   Browser closed gracefully")
                     except asyncio.TimeoutError:
-                        print(f"   Browser close timeout - forcing cleanup")
+                        print(f"   Browser close timeout")
                     except Exception as e:
                         print(f"   Error during browser close: {e}")
 
@@ -174,7 +196,6 @@ async def main():
     print("   → Check file: collected_emails_v6.csv")
 
 if __name__ == "__main__":
-    # Define READER_HUBS here if not already
     READER_HUBS = [
         "https://www.goodreads.com",
         "https://app.thestorygraph.com",
