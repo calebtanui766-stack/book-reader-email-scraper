@@ -130,4 +130,58 @@ async def main():
 
                 print(f"Session {session_count}: Visiting reader sites...")
 
-                for url in READER_HUBS:   # Make sure READER_HUBS is defined (from
+                for url in READER_HUBS:   # Make sure READER_HUBS is defined (from previous code)
+                    if time.time() > end_time:
+                        break
+                    try:
+                        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                        await asyncio.sleep(1.5)
+                        page_emails = await extract_emails(page, url)
+                        if page_emails:
+                            all_emails.update(page_emails)
+                            print(f"   ✅ Found {len(page_emails)} emails from {url}")
+                    except Exception as e:
+                        print(f"   ⚠️ Skipped {url}: {str(e)[:80]}")
+
+            except Exception as e:
+                print(f"Session {session_count} error: {e}")
+                traceback.print_exc()
+            finally:
+                # Robust cleanup to prevent "will force kill"
+                if browser:
+                    try:
+                        await asyncio.wait_for(browser.close(), timeout=10)
+                        print(f"   Browser closed gracefully")
+                    except asyncio.TimeoutError:
+                        print(f"   Browser close timeout - forcing cleanup")
+                    except Exception as e:
+                        print(f"   Error during browser close: {e}")
+
+            if time.time() < end_time:
+                await asyncio.sleep(random.uniform(8, 15))
+
+    # Save results
+    with open("collected_emails_v6.csv", "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["email", "source", "domain", "context"])
+        for email, src in all_emails.items():
+            domain = email.split("@")[1] if "@" in email else ""
+            context = src.split(" @ ")[0] if " @ " in src else src
+            writer.writerow([email, src, domain, context])
+
+    print(f"\n🏁 {RUN_DURATION_MINUTES}-minute run completed!")
+    print(f"   Total unique emails: {len(all_emails)}")
+    print("   → Check file: collected_emails_v6.csv")
+
+if __name__ == "__main__":
+    # Define READER_HUBS here if not already
+    READER_HUBS = [
+        "https://www.goodreads.com",
+        "https://app.thestorygraph.com",
+        "https://bookriot.com",
+        "https://www.bookbrowse.com",
+        "https://archiveofourown.org",
+        "https://www.wattpad.com",
+        "https://www.librarything.com",
+    ]
+    asyncio.run(main())
