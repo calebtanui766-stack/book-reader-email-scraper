@@ -1,0 +1,9 @@
+name: book-reader-email-scraper
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - playwright>=1.40.0
